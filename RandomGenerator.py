@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 import psycopg2
 
-import random
+import random 
 from datetime import datetime, timedelta
 from faker import Faker
 import json
