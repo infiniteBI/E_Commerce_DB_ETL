@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 import psycopg2
 
-import random 
+import random
 from datetime import datetime, timedelta
 from faker import Faker
 import json
@@ -28,15 +28,15 @@ Faker.seed(42)
 random.seed(42)
 
 # Configuration
-NUM_CUSTOMERS = 100
+NUM_CUSTOMERS = 20
 NUM_DEPARTMENTS = 5
 NUM_EMPLOYEES = 50
 NUM_MANUFACTURES = 5
 NUM_PRODUCTS = 10
-NUM_ORDERS = 400
-NUM_PAYMENTS = 400
-NUM_RETURNS = 50
-NUM_PRICE_HISTORY = 100
+NUM_ORDERS = 100
+NUM_PAYMENTS = 100
+NUM_RETURNS = 5
+NUM_PRICE_HISTORY = 60
 
 def random_date(start_year=2025, end_year=2025):
     start = datetime(start_year, 1, 1)
@@ -266,14 +266,63 @@ def generate_sql_inserts(table_name, data):
     
     sql += "\n"
     return sql
+# Add tracking columns to all tables
+def add_tracking_columns():
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    tables = ['customer', 'employee', 'department', 'manufacture', 
+              'product', 'orders', 'order_details', 'shipping', 
+              'payment', 'return_request', 'price_history']
+    
+    for table in tables:
+        try:
+            cursor.execute(f"""
+                ALTER TABLE {table}
+                ADD COLUMN IF NOT EXISTS batch_id VARCHAR(50) DEFAULT NULL,
+                ADD COLUMN IF NOT EXISTS time_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """)
+            print(f"✓ Added tracking columns to {table}")
+        except Exception as e:
+            print(f"✗ Error on {table}: {e}")
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
 
-def insert_data_into_rds(table_name, data):
+# Run once to add columns
+add_tracking_columns()
+
+
+
+def insert_data_into_rds(table_name, data, batch_id):
+
+    # Map table names to primary key column
+    PRIMARY_KEYS = {
+        'customer': 'customerId',
+        'employee': 'employeeId',
+        'department': 'departmentId',
+        'manufacture': 'manufactureId',
+        'product': 'productId',
+        'orders': 'orderId',
+        'order_details': 'orderDetailId',
+        'shipping': 'shippingId',
+        'payment': 'paymentId',
+        'return_request': 'returnId',
+        'price_history': 'priceHistoryId'
+    }
     
     if not data:
         print("No data to insert.")
         return
+    # Get primary key for this table
+    primary_key = PRIMARY_KEYS.get(table_name)
+    if primary_key is None:
+        print(f"No primary key defined for table {table_name}. Skipping...")
+        return
     conn = get_connection()
     cursor = conn.cursor()
+
     
     try:
         # 1. Drop constraints
@@ -290,7 +339,12 @@ def insert_data_into_rds(table_name, data):
         columns = list(data[0].keys())
         quoted_col_names = ", ".join(f'"{col}"' for col in columns)
         placeholders = ", ".join(["%s"] * len(columns))
-        sql = f"INSERT INTO {table_name} ({quoted_col_names}) VALUES ({placeholders}) ON CONFLICT ("{primary_key}") DO NOTHING"
+        sql = f"INSERT INTO {table_name} ({quoted_col_names}) VALUES ({placeholders}) ON CONFLICT ({primary_key}) DO NOTHING"
+        
+         # Add batch_id to each row
+        for row in data:
+            row['batch_id'] = batch_id
+            row['time_updated'] = datetime.now()
 
         for row in data:
             values = [row[col] for col in columns]
@@ -318,6 +372,8 @@ def insert_data_into_rds(table_name, data):
 
     print(f"Inserted {len(data)} rows into {table_name}")
 
+BATCH_ID = datetime.now().strftime('%Y%m%d_%H%M%S')  # e.g., "20241209_143052"
+
 # Generate all data
 print("Generating data...")
 customers = generate_customers(NUM_CUSTOMERS)
@@ -334,17 +390,17 @@ price_history = generate_price_history(NUM_PRICE_HISTORY, products, employees)
 
 #inserting data into aws
 if __name__ == "__main__":
-    insert_data_into_rds('customer', customers)
-    insert_data_into_rds('employee', employees)
-    insert_data_into_rds('department', departments)
-    insert_data_into_rds('manufacture', manufactures)
-    insert_data_into_rds('product', products)
-    insert_data_into_rds('orders', orders)
-    insert_data_into_rds('order_details', order_details)
-    insert_data_into_rds('shipping', shipping)
-    insert_data_into_rds('payment', payments)
-    insert_data_into_rds('return_request', returns)
-    insert_data_into_rds('price_history', price_history)
+    insert_data_into_rds('customer', customers, BATCH_ID )
+    insert_data_into_rds('employee', employees, BATCH_ID )
+    insert_data_into_rds('department', departments, BATCH_ID )
+    insert_data_into_rds('manufacture', manufactures,BATCH_ID )
+    insert_data_into_rds('product', products, BATCH_ID )
+    insert_data_into_rds('orders', orders, BATCH_ID )
+    insert_data_into_rds('order_details', order_details, BATCH_ID )
+    insert_data_into_rds('shipping', shipping, BATCH_ID )
+    insert_data_into_rds('payment', payments, BATCH_ID )
+    insert_data_into_rds('return_request', returns, BATCH_ID )
+    insert_data_into_rds('price_history', price_history, BATCH_ID )
 
 
 
